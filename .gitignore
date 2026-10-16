@@ -1,0 +1,7 @@
+.DS_Store
+.build/
+dist/
+.tmp/
+.swiftpm/
+# 公開前チェックのパターン（パターン自体が内部情報になるためリポジトリに入れない）
+scripts/prepublish-patterns.local

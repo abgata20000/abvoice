@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>ja</string>
+	<key>CFBundleExecutable</key>
+	<string>AbVoiceLocal</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>jp.abgata.abvoice.local</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>AbVoice Local</string>
+	<key>CFBundleDisplayName</key>
+	<string>AbVoice Local</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<!-- リリースのタグ（vX.Y.Z）はこの値と一致させる。 -->
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<!-- Dock にアイコンを出す。メニューバー常駐だけのアプリにはしない。 -->
+	<key>LSUIElement</key>
+	<false/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<!--
+	  リアルタイム速報（オンデバイスの SpeechTranscriber）用。
+	  ⚠️ 実測（2026-08-20 / macOS 26.5.1）では音声認識の許可を求められず、
+	     authorizationStatus は notDetermined のまま認識できた＝このキーは無くても動く。
+	     それでも、フレームワーク側が将来 TCC を要求したときに
+	     「usage description が無い」だけで即クラッシュするのを避けるため置いておく。
+	-->
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>喋っている内容をその場で画面に表示するために、この Mac の中だけで音声認識を行います。音声は外部に送信しません。</string>
+	<!-- 無いとマイク許可のダイアログが出ない -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>喋った内容を文字起こしするためにマイクを使用します。録音はホットキーを押している間だけ行われます。</string>
+	<!--
+	  ⚠️ NSAllowsArbitraryLoads は書かない。平文 HTTP を使うのは、この Mac の中の Ollama
+	     （localhost）だけ。NSAllowsLocalNetworking だけで localhost / 127.0.0.1 に届き、
+	     外部への平文 HTTP は ATS が拒否する（実測）。外向きの通信（OpenAI・モデルの取得）は https。
+	-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>テキストをカーソル位置に挿入するために他アプリへキー入力を送ります。</string>
+</dict>
+</plist>
