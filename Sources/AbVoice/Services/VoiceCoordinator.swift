@@ -130,8 +130,18 @@ final class VoiceCoordinator: ObservableObject {
         LocalHistoryStore.shared.prune(retentionDays: settings.historyRetentionDays)
 
         // 起動時にモデルをメモリへ載せておく（最初の 1 回だけ遅い、を避ける）。
-        // ⚠️ まだ取得していなければ何もしない。勝手に数百 MB を取りに行かない。
-        Task { await ModelManager.shared.prepare(variant: settings.whisperModel) }
+        // ⚠️ 初回の設定の前は取りに行かない（どのモデルにするかをウィザードで選んでもらうため）。
+        //    初回の設定を終えているのにモデルが無いときだけ、ここで取得を始める。
+        //    取得しないまま設定を終えた人・取得に失敗したままの人が、何も文字にできない状態で止まらないように
+        //    （v0.1.0 で実際に起きた）。
+        Task {
+            let manager = ModelManager.shared
+            await manager.prepare(variant: settings.whisperModel)
+            if settings.onboardingCompleted, settings.transcriptionEngine == .local, manager.status == .notDownloaded {
+                Notifier.shared.info("文字起こしモデルが無いので取得を始めます")
+                await manager.downloadAndPrepare(variant: settings.whisperModel)
+            }
+        }
 
         Task {
             // ⚠️ 初回の設定が終わるまでは、マイクの許可も求めない（ウィザードが順に求める）。

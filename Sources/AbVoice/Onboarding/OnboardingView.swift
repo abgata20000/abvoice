@@ -87,8 +87,22 @@ struct OnboardingView: View {
     }
 
     private func next() {
+        // ⚠️ モデルの手順で「取得する」を押さずに進んだら、ここで取得を始める。
+        //    押し忘れたまま最後まで進むと、モデルが無くて何も文字にできない（v0.1.0 で実際に起きた）。
+        if step == .model {
+            startModelDownloadIfNeeded()
+        }
         guard let following = Step(rawValue: step.rawValue + 1) else { return }
         stepIndex = following.rawValue
+    }
+
+    private func startModelDownloadIfNeeded() {
+        switch model.status {
+        case .notDownloaded, .failed:
+            Task { await model.downloadAndPrepare(variant: settings.whisperModel) }
+        case .downloading, .preparing, .ready:
+            break
+        }
     }
 
     private func back() {
@@ -418,8 +432,15 @@ private struct TryItStep: View {
             Text("試しに喋ってみましょう").font(.title3.bold())
             Text("下の欄をクリックしてから \(hotkeyName) を押し、「明日の会議は十時からです」と喋って、もう一度 \(hotkeyName) を押してください。")
 
-            if model.status != .ready {
-                Label(model.statusText, systemImage: "hourglass")
+            switch model.status {
+            case .ready:
+                EmptyView()
+            case .notDownloaded, .failed:
+                Label(model.statusText, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout).foregroundStyle(.orange)
+                Button("モデルを取得する") { Task { await model.downloadAndPrepare(variant: settings.whisperModel) } }
+            case .downloading, .preparing:
+                Label("\(model.statusText)。終わるまで文字にできません", systemImage: "hourglass")
                     .font(.callout).foregroundStyle(.orange)
             }
 

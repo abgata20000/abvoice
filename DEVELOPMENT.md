@@ -45,6 +45,7 @@ xcrun notarytool store-credentials abvoice-notary --apple-id <Apple ID> --team-i
 ### 毎回やること
 
 1. `Resources/Info.plist` の `CFBundleShortVersionString`（と `CFBundleVersion`）を上げてコミットする
+   - ⚠️ `PlistBuddy -c Set` で書き換えない。ファイルを書き直して、中の注意書きのコメントが消える。テキストとして 2 行だけ直す
 2. 公証つきの `.dmg` を作り、GitHub Releases に下書きで置く
 
 ```bash

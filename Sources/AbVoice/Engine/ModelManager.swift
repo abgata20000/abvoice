@@ -58,6 +58,13 @@ final class ModelManager: ObservableObject {
         FileManager.default.fileExists(atPath: completionMarker(for: variant).path)
     }
 
+    /// WhisperKit が読み込みに必ず使う 3 つが揃っているか。
+    static func hasModelFiles(in folder: URL) -> Bool {
+        ["MelSpectrogram", "AudioEncoder", "TextDecoder"].allSatisfy { name in
+            FileManager.default.fileExists(atPath: folder.appendingPathComponent("\(name).mlmodelc").path)
+        }
+    }
+
     // MARK: 読み込み
 
     /// 取得済みならメモリに載せる。まだなら「取得していない」にするだけ（勝手に取得は始めない）。
@@ -110,9 +117,13 @@ final class ModelManager: ObservableObject {
                     ModelManager.shared.status = .downloading(fraction)
                 }
             }
-            guard folder.standardizedFileURL == modelFolder(for: variant).standardizedFileURL else {
+            // ⚠️ 返ってきた URL と、こちらで組み立てた URL を文字列で比べない。
+            //    末尾の `/` の有無などで食い違い、取得できているのに毎回「失敗」になった（v0.1.0 の不具合）。
+            //    読み込みに使うのはこちらの場所なので、そこに本体のファイルが揃っているかで判断する。
+            let expected = modelFolder(for: variant)
+            guard Self.hasModelFiles(in: expected) else {
                 // ⚠️ WhisperKit の置き場所が変わった。黙って進めると「取得済みなのに無い」になる。
-                throw HTTPError.decoding("モデルが想定と違う場所に置かれました: \(folder.lastPathComponent)")
+                throw HTTPError.decoding("取得したモデルが見つかりません（取得先: \(folder.path) / 読み込み先: \(expected.path)）")
             }
             try Data().write(to: completionMarker(for: variant))
         } catch {
