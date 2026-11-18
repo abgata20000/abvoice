@@ -16,6 +16,7 @@ final class HotkeyMonitor {
     /// コマンドキーが押された。音声コマンドとして録音を始めたい。
     var onStartCommand: (() -> Void)?
     /// 録音を止めて処理に回したい。⚠️ 口述・コマンド共用。用途は開始時に決まっている。
+    /// コマンドキーは長押しなら離したとき、短押しならもう一度押したときに呼ぶ。
     var onStop: (() -> Void)?
     /// Escape。録音を破棄する。
     var onCancel: (() -> Void)?
@@ -178,7 +179,8 @@ final class HotkeyMonitor {
         return nil // ホットキー自体は他アプリに流さない
     }
 
-    private func handleKeyDown(isCommand: Bool) {
+    /// ⚠️ テストから押下・解放を再現するため private にしていない。
+    func handleKeyDown(isCommand: Bool) {
         let recording = isRecording?() ?? false
 
         if recording {
@@ -192,10 +194,11 @@ final class HotkeyMonitor {
 
         // ★ 押した瞬間に開始する。tap / hold の判定は停止方法の決定にしか使わない。
         startedByCurrentPress = true
-        // ⚠️ コマンドは録音モードに関係なく常に押しっぱなし（押している間だけ聞き、離したら実行）。
-        //    短い指示を出すだけなので、止めるためにもう一度押させない。
+        // ⚠️ コマンドは録音モードに関係なく「自動」と同じ動き（長押しは離して実行、短押しはトグル）。
+        //    以前は常に押しっぱなしだったが、口述の感覚で短く押して離すと 0.4 秒未満で録音が終わり、
+        //    「声が入っていません」になって使えなかった（配布版を試した人の報告。2026-11-18）。
         startedAsCommand = isCommand
-        isHold = (mode == .pushToTalk) || isCommand
+        isHold = (mode == .pushToTalk) && !isCommand
         pressGeneration += 1
         let generation = pressGeneration
 
@@ -203,7 +206,7 @@ final class HotkeyMonitor {
             if isCommand { self?.onStartCommand?() } else { self?.onStart?() }
         }
 
-        guard mode == .auto, !isCommand else { return }
+        guard mode == .auto || isCommand else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + holdThreshold) { [weak self] in
             guard let self, self.pressGeneration == generation, self.startedByCurrentPress else { return }
             // まだ離されていない = 長押し。離した時点で止める。
@@ -211,15 +214,18 @@ final class HotkeyMonitor {
         }
     }
 
-    private func handleKeyUp() {
+    func handleKeyUp() {
         pressGeneration += 1
         guard startedByCurrentPress else { return }
 
         if startedAsCommand {
             startedByCurrentPress = false
             startedAsCommand = false
+            if isHold {
+                DispatchQueue.main.async { [weak self] in self?.onStop?() }
+            }
+            // 短押し = トグル。次に押されるまで録り続ける。
             isHold = false
-            DispatchQueue.main.async { [weak self] in self?.onStop?() }
             return
         }
 

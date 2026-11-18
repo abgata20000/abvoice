@@ -104,7 +104,7 @@ struct CommandsView: View {
             if let hotkeyMessage {
                 Text(hotkeyMessage).font(.caption).foregroundStyle(.orange)
             }
-            Text("押している間だけ聞き、離したら実行します（録音モードの設定に関係なく、常に押しっぱなし）。")
+            Text("押したまま喋って、離すと実行します。短く押したときは、喋ってからもう一度押すと実行します。")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .disabled(!settings.commandsEnabled)

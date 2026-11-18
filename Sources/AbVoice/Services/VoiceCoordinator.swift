@@ -340,11 +340,15 @@ final class VoiceCoordinator: ObservableObject {
                 setStage(.failed(message), destination: .microphoneSettings)
                 Notifier.shared.error(message)
                 Notifier.shared.playErrorSound()
-            } else {
+            } else if let captured, captured.duration >= 0.4 {
                 // 喋っていないだけなので失敗扱いにはしない。
                 // ⚠️ マイクの選択が外れているのが典型なので、設定へ飛べるようにする。
-                setStage(.skipped("何も挿入していません"), destination: .microphoneSettings)
+                setStage(.skipped("マイクに声が届いていません"), destination: .microphoneSettings)
                 Notifier.shared.info("声が入っていなかったため何も挿入しませんでした。")
+            } else {
+                // ⚠️ 声が届かないのと分けて出す。キーをすぐ離したのが典型で、マイクの設定を疑わせないため。
+                setStage(.skipped(String(format: "録音が短すぎました（%.1f 秒）", captured?.duration ?? 0)))
+                Notifier.shared.info("録音が短すぎたため何もしませんでした。")
             }
             return
         }
