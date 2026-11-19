@@ -39,7 +39,7 @@ final class MicTester: ObservableObject {
         let input = engine.inputNode
         input.removeTap(onBus: 0)
 
-        if case .fellBackToDefault(let uid) = AudioDeviceManager.apply(uid: inputDeviceUID, to: engine) {
+        if case .fellBackToDefault(let uid, _) = AudioDeviceManager.apply(uid: inputDeviceUID, to: engine) {
             errorMessage = "選択中のマイク（\(AudioDeviceManager.name(forUID: uid) ?? uid)）が見つかりません。"
         }
 

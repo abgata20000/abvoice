@@ -39,9 +39,12 @@ final class AudioRecorder {
     /// ⚠️ 速報用に `AVAudioEngine` をもう 1 つ立てないためのフック（マイクの取り合いを避ける）。
     var onBuffer: ((AVAudioPCMBuffer) -> Void)?
 
-    private let engine = AVAudioEngine()
-    /// エンジンに割り当て済みの入力デバイス UID。変わったときだけ差し替える（毎回やると開始が遅くなる）。
-    private var appliedDeviceUID: String??
+    /// ⚠️ `let` にしない。掴んでいるデバイスが別物になったら作り直すため（`start` の注意書き参照）。
+    private var engine = AVAudioEngine()
+    /// エンジンに割り当て済みの入力デバイスの `AudioDeviceID`。
+    /// ⚠️ UID ではなく **ID** を覚える。UID は同じままでも ID は再接続で変わり、
+    ///    「UID が同じだから何もしなくてよい」と判断すると古い実体を掴んだまま無音になる。
+    private var appliedDeviceID: AudioDeviceID?
     private var converter: AVAudioConverter?
     /// tap を張ったときのフォーマット。速報側が同じ音を変換するのに要る。
     private(set) var inputFormat: AVAudioFormat?
@@ -78,27 +81,48 @@ final class AudioRecorder {
 
     /// - Parameter inputDeviceUID: 使うマイクの UID。nil ならシステム既定。
     ///   ⚠️ クラムシェルだと内蔵マイクが死ぬので、ここで明示的に選べるようにしてある。
-    func start(inputDeviceUID: String?) throws {
-        guard !isRunning else { return }
+    /// - Returns: 実際に掴んだデバイス名。ログに出すためだけに返す。
+    @discardableResult
+    func start(inputDeviceUID: String?) throws -> String? {
+        guard !isRunning else { return nil }
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             throw AudioRecorderError.microphoneDenied
         }
 
-        // 前回の tap が残っていることがあるので必ず外してから張り直す。
+        // ⚠️ 途中で throw したらエンジンを捨てる。format が読めなかったエンジンを次回も
+        //    使い回すと、同じところで失敗し続けて「再起動しか手がない」に戻ってしまう。
+        var startedCleanly = false
+        defer {
+            if !startedCleanly { discardEngine() }
+        }
+
+        // ⚠️⚠️ デバイスの割り当ては録音のたびにやり直す。`AudioDeviceID` は USB の再接続や
+        //    スリープ復帰で変わるため、UID が同じでも「前回と同じデバイス」とは限らない。
+        //    ここを UID でキャッシュしていたせいで、11 日連続稼働のあいだ古い ID を掴み続け、
+        //    ゼロで埋まったバッファを録り続けた（2026-09-28 / peak 0.0000 で毎回破棄されていた）。
+        //    apply は CoreAudio のプロパティ設定だけなので、毎回呼んでも開始は速い。
+        //    ⚠️ 同じ ID でも入れ直すこと自体に意味がある（デバイスが再オープンされる）。
+        var result = AudioDeviceManager.apply(uid: inputDeviceUID, to: engine)
+
+        // ID が変わった = 掴んでいた実体が別物になった。古い ID のままの AudioUnit は
+        // 無音を返し続けるので、エンジンごと捨てて作り直す。
+        // ⚠️ `deviceID` が nil のときは「分からなかった」だけ。実体が変わった証拠にはならないので、
+        //    作り直しの判定にも、覚えている ID の上書きにも使わない。
+        if let newID = result.deviceID, let applied = appliedDeviceID, newID != applied {
+            discardEngine()
+            result = AudioDeviceManager.apply(uid: inputDeviceUID, to: engine)
+        }
+        if let newID = result.deviceID { appliedDeviceID = newID }
+
+        var missingDevice: String?
+        if case .fellBackToDefault(let uid, _) = result {
+            missingDevice = AudioDeviceManager.name(forUID: uid) ?? uid
+        }
+
+        // ⚠️ `inputNode` はエンジンを作り直した後に取る。前回の tap が残っていることが
+        //    あるので必ず外してから張り直す。
         let input = engine.inputNode
         input.removeTap(onBus: 0)
-
-        // デバイスの割り当ては format を読む前に済ませる。選択が変わっていないときは触らない。
-        var missingDevice: String?
-        if appliedDeviceUID != .some(inputDeviceUID) {
-            switch AudioDeviceManager.apply(uid: inputDeviceUID, to: engine) {
-            case .fellBackToDefault(let uid):
-                missingDevice = AudioDeviceManager.name(forUID: uid) ?? uid
-                appliedDeviceUID = .some(nil)
-            case .applied, .systemDefault:
-                appliedDeviceUID = .some(inputDeviceUID)
-            }
-        }
 
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
@@ -145,6 +169,7 @@ final class AudioRecorder {
             lock.lock(); running = false; lock.unlock()
             throw AudioRecorderError.engineFailed(error.localizedDescription)
         }
+        startedCleanly = true
 
         // ⚠️ 録音は既定デバイスで続行する。黙って別のマイクを使うと気づけないので知らせる。
         if let missingDevice {
@@ -155,6 +180,18 @@ final class AudioRecorder {
                 )
             }
         }
+
+        return result.deviceName
+    }
+
+    /// 次の録音でエンジンを作り直させる。
+    ///
+    /// ⚠️ 「バッファが丸ごとゼロだった」と分かったときに呼ぶ最後の手段。デバイスを入れ直しても
+    ///    復活しない死に方（`AudioDeviceID` が変わらないまま実体が死ぬ）に備えてある。
+    ///    検出しているのに手を打たないと、結局アプリの再起動しか道がなくなる。
+    func invalidateEngine() {
+        guard !isRunning else { return }
+        discardEngine()
     }
 
     /// 録音を止め、WAV データと発話長を返す。
@@ -197,6 +234,16 @@ final class AudioRecorder {
     }
 
     // MARK: 内部
+
+    /// いま持っているエンジンを捨てて新品に差し替える。
+    /// ⚠️ 覚えていた `AudioDeviceID` も忘れる。新品のエンジンには何も割り当たっていないため。
+    private func discardEngine() {
+        // ⚠️ tap を外してから捨てる。張ったまま解放すると稀に落ちる。
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        engine = AVAudioEngine()
+        appliedDeviceID = nil
+    }
 
     private func handle(buffer: AVAudioPCMBuffer, outputFormat: AVAudioFormat) {
         onLevel?(Self.rms(of: buffer))

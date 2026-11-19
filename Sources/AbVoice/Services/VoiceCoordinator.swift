@@ -111,6 +111,11 @@ final class VoiceCoordinator: ObservableObject {
                 // 声の検出のために監視は常に回している。停止させるのは ON のときだけ。
                 guard AppSettings.shared.silenceStopEnabled else { return }
                 Notifier.shared.warn("無音が \(Int(AppSettings.shared.silenceStopSeconds)) 秒続いたため録音を止めました。", notify: true)
+                // 誤って止まったときに切り分けられるよう、判定に使った値を残す。
+                Notifier.shared.info(String(
+                    format: "無音停止の判定値: ノイズフロア %.4f / 声しきい値 %.4f",
+                    self.watchdog.noiseFloor, self.watchdog.voiceThreshold
+                ))
                 self.stopAndProcess()
             }
         }
@@ -261,8 +266,9 @@ final class VoiceCoordinator: ObservableObject {
             return
         }
 
+        let deviceName: String?
         do {
-            try recorder.start(inputDeviceUID: AppSettings.shared.inputDeviceUID)
+            deviceName = try recorder.start(inputDeviceUID: AppSettings.shared.inputDeviceUID)
         } catch {
             Notifier.shared.error(error.localizedDescription)
             Notifier.shared.playErrorSound()
@@ -288,12 +294,15 @@ final class VoiceCoordinator: ObservableObject {
             Task { await realtime.start(inputFormat: inputFormat, contextualStrings: terms) }
         }
 
+        // ⚠️ 掴んだマイクの名前を必ず残す。これが無いと「どのデバイスで録っていたか」が
+        //    後から分からず、無音の切り分けができない。
+        let device = deviceName.map { " / \($0)" } ?? ""
         if purpose == .command {
             Notifier.shared.playCommandStartSound()
-            Notifier.shared.info("録音開始（コマンド）")
+            Notifier.shared.info("録音開始（コマンド\(device)）")
         } else {
             Notifier.shared.playStartSound()
-            Notifier.shared.info("録音開始")
+            Notifier.shared.info(deviceName.map { "録音開始（\($0)）" } ?? "録音開始")
         }
         setStage(.recording)
 
@@ -337,6 +346,18 @@ final class VoiceCoordinator: ObservableObject {
             if let detail = recorder.lastConversionError {
                 // ⚠️ マイクは拾えているのに変換で落ちている場合。無音と区別して出す。
                 let message = AudioRecorderError.conversionFailed(detail).localizedDescription
+                setStage(.failed(message), destination: .microphoneSettings)
+                Notifier.shared.error(message)
+                Notifier.shared.playErrorSound()
+            } else if maxLevelDuringRecording < 0.00001, let captured, captured.duration >= 0.4 {
+                // ⚠️ サンプルが丸ごとゼロ。黙っていたのではなく、マイクが無音を返している
+                //    （掴んでいるデバイスが死んでいる）。「声が入っていません」と言うと
+                //    原因を探しに行けないので区別して出す。
+                // ⚠️ デバイスを入れ直しても復活しない死に方があるので、次の録音では
+                //    エンジンごと作り直させる。検出できているのに手を打たないと、
+                //    結局アプリの再起動しか道がなくなる。
+                recorder.invalidateEngine()
+                let message = "マイクから音が届いていません。もう一度試してください（直らないときは設定 > マイク を確認）。"
                 setStage(.failed(message), destination: .microphoneSettings)
                 Notifier.shared.error(message)
                 Notifier.shared.playErrorSound()

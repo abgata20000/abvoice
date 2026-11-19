@@ -18,6 +18,12 @@ final class SilenceWatchdog {
     /// 静かすぎる環境でノイズフロアが 0 に張り付くのを防ぐ下限。
     /// ⚠️ 高くすると入力の小さい USB マイクで「声なし」と誤判定する（実測で 0.012 は高すぎた）。
     private let minimumVoiceLevel: Float = 0.004
+    /// ノイズフロアがどれだけ上振れしても、この音量以上は必ず「声」とみなす上限。
+    /// ⚠️ 計測窓に開始音・キー押下音・喋り出しが入るとノイズフロアが 0.012〜0.014 まで上振れし、
+    ///    しきい値が約 0.04 になって普通の発話（0.01〜0.03）を声と判定しなくなる。
+    ///    開始直後の一瞬だけ声と判定され、その 30 秒後に喋っている最中でも止まった（2026-09-04 / 09-08 実測）。
+    ///    短い発話の peak の実測下限は 0.0155。
+    private let maximumVoiceLevel: Float = 0.010
 
     private var startedAt: Date?
     private var calibrationSamples: [Float] = []
@@ -58,7 +64,9 @@ final class SilenceWatchdog {
                 ? 0
                 : calibrationSamples.reduce(0, +) / Float(calibrationSamples.count)
             noiseFloor = avg
-            voiceThreshold = max(avg * voiceFactor, minimumVoiceLevel)
+            // 雑音が常に上限を超える部屋では無音停止が効かなくなるが、それは許容する
+            // （止め忘れ防止のためだけの機能で、最長録音の安全弁が別にある。喋っている最中に切る方がずっと害が大きい）。
+            voiceThreshold = min(max(avg * voiceFactor, minimumVoiceLevel), maximumVoiceLevel)
         }
 
         if level >= voiceThreshold {

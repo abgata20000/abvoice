@@ -52,18 +52,41 @@ enum AudioDeviceManager {
 
     enum ApplyResult {
         /// 指定したデバイスを割り当てた。
-        case applied(AudioInputDevice)
+        case applied(AudioInputDevice, deviceID: AudioDeviceID)
         /// システム既定をそのまま使う。
-        case systemDefault
+        case systemDefault(deviceID: AudioDeviceID?)
         /// ⚠️ 選ばれていたデバイスが見つからない（外された）ので既定に落とした。
-        case fellBackToDefault(missingUID: String)
+        case fellBackToDefault(missingUID: String, deviceID: AudioDeviceID?)
+
+        /// 実際にエンジンへ割り当てた `AudioDeviceID`。
+        /// ⚠️ 呼び出し側はこれを前回と比べる。UID が同じでも ID は再接続で変わり、
+        ///    変わったことに気づかないと古い実体を掴んだまま無音になる。
+        var deviceID: AudioDeviceID? {
+            switch self {
+            case .applied(_, let deviceID):
+                return deviceID
+            case .systemDefault(let deviceID), .fellBackToDefault(_, let deviceID):
+                return deviceID
+            }
+        }
+
+        /// ログや通知に出すデバイス名。
+        var deviceName: String? {
+            switch self {
+            case .applied(let device, _):
+                return device.name
+            case .systemDefault(let deviceID), .fellBackToDefault(_, let deviceID):
+                return deviceID.flatMap { stringProperty($0, kAudioObjectPropertyName) }
+            }
+        }
     }
 
     /// エンジンの入力を指定 UID のデバイスに切り替える。
     /// ⚠️ エンジンが動いていない状態で呼ぶこと。
+    /// ⚠️ 録音のたびに呼ぶこと。結果をキャッシュして呼ばずに済ませてはいけない（`AudioRecorder` の注意書き参照）。
     @discardableResult
     static func apply(uid: String?, to engine: AVAudioEngine) -> ApplyResult {
-        guard let unit = engine.inputNode.audioUnit else { return .systemDefault }
+        guard let unit = engine.inputNode.audioUnit else { return .systemDefault(deviceID: nil) }
 
         func set(_ deviceID: AudioDeviceID) {
             var value = deviceID
@@ -79,18 +102,25 @@ enum AudioDeviceManager {
 
         guard let uid else {
             // 以前に別デバイスを割り当てている可能性があるので、既定を明示的に入れ直す。
-            if let deviceID = defaultInputDeviceID() { set(deviceID) }
-            return .systemDefault
+            guard let deviceID = defaultInputDeviceID() else { return .systemDefault(deviceID: nil) }
+            set(deviceID)
+            return .systemDefault(deviceID: deviceID)
         }
 
         guard let deviceID = deviceID(forUID: uid) else {
-            if let fallback = defaultInputDeviceID() { set(fallback) }
-            return .fellBackToDefault(missingUID: uid)
+            guard let fallback = defaultInputDeviceID() else {
+                return .fellBackToDefault(missingUID: uid, deviceID: nil)
+            }
+            set(fallback)
+            return .fellBackToDefault(missingUID: uid, deviceID: fallback)
         }
 
         set(deviceID)
         let name = stringProperty(deviceID, kAudioObjectPropertyName) ?? uid
-        return .applied(AudioInputDevice(id: uid, name: name, channels: inputChannelCount(deviceID)))
+        return .applied(
+            AudioInputDevice(id: uid, name: name, channels: inputChannelCount(deviceID)),
+            deviceID: deviceID
+        )
     }
 
     // MARK: CoreAudio の下回り
